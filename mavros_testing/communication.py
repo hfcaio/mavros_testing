@@ -3,7 +3,7 @@ import numpy as np
 from dataclasses import dataclass
 from time import time
 from rclpy.node import Node
-from geometry_msgs.msg import PoseStamped, Pose, Twist, Quaternion
+from geometry_msgs.msg import PoseStamped, Pose, Twist, Quaternion, PositionTarget
 from mavros_msgs.srv import CommandBool, SetMode, CommandTOL
 
 # CONSTANTS
@@ -38,6 +38,7 @@ class Mav(Node):
     # INITIALIZING PUBLISHERS
     self._position_pub = self.create_publisher(PoseStamped, '/mavros/setpoint_position/local', QoS)
     self._velocity_pub = self.create_publisher(Twist, '/mavros/setpoint_velocity/cmd_vel', QoS) 
+    self._raw_pub = self.create_publisher(PositionTarget, '/mavros/setpoint_raw/local', QoS)
 
     # INITIALIZING SERVICES
     self._arm_srv = self.create_client(CommandBool, '/mavros/cmd/arming')
@@ -118,6 +119,68 @@ class Mav(Node):
     Sends a land command to the vehicle.
     """
     return self.change_mode("9") and self.disarm()
+  
+  def set_velocity(self, vel_x: Numeric = 0, vel_y: Numeric = 0, vel_z: Numeric = 0, ang_x: Numeric = 0, ang_y: Numeric = 0, ang_z: Numeric = 0) -> None:
+    """
+    Sends a Twist message and publishes it as a setpoint (assuming vehicle is in guided mode).
+    """
+    vel_msg = Twist()
+    vel_msg.linear.x = vel_x
+    vel_msg.linear.y = vel_y
+    vel_msg.linear.z = vel_z
+    vel_msg.angular.x = ang_x
+    vel_msg.angular.y = ang_y
+    vel_msg.angular.z = ang_z
+
+    if self._debug: self.get_logger().info(f"[SET_VELOCITY] Sending Twist: {vel_msg}")
+    self._velocity_pub.publish(vel_msg)
+
+  def set_velocity_relative(self, forward: Numeric = 0, sideways: Numeric = 0, upward: Numeric = 0) -> None:
+    """
+    Sends a PositionTarget message and publishes it as a setpoint (assuming vehicle is in guided mode).
+    Just uses the velocity fields of the message.
+    frame: MAV_FRAME_BODY_NED
+    """
+    msg = PositionTarget()
+    msg.header.stamp = self.get_clock().now().to_msg()
+    msg.header.frame_id = 'base_footprint'
+    
+    msg.coordinate_frame = PositionTarget.FRAME_BODY_NED
+
+    msg.velocity.x = forward
+    msg.velocity.y = sideways
+    msg.velocity.z = upward
+
+    msg.type_mask = PositionTarget.IGNORE_PX | PositionTarget.IGNORE_PY | PositionTarget.IGNORE_PZ | PositionTarget.IGNORE_AFX | PositionTarget.IGNORE_AFY | PositionTarget.IGNORE_AFZ | PositionTarget.IGNORE_YAW | PositionTarget.IGNORE_YAW_RATE
+    
+    if self._debug: self.get_logger().info(f"[SET_VELOCITY_RELATIVE] Sending PositionTarget: {msg}")
+    self._raw_pub.publish(msg)
+
+  def rotate_yaw_relative(self, yaw: Numeric,yaw_rate: Numeric = 0.5) -> None:
+    """
+    Sends a PositionTarget message and publishes it as a setpoint (assuming vehicle is in guided mode).
+    Just uses the yaw fields of the message.
+    frame: MAV_FRAME_BODY_NED
+    """
+    msg = PositionTarget()
+    msg.header.stamp = self.get_clock().now().to_msg()
+    msg.header.frame_id = 'base_footprint'
+    
+    msg.coordinate_frame = PositionTarget.FRAME_BODY_NED
+
+    msg.yaw = yaw
+    msg.yaw_rate = yaw_rate
+
+    msg.type_mask = PositionTarget.IGNORE_PX | PositionTarget.IGNORE_PY | PositionTarget.IGNORE_PZ | PositionTarget.IGNORE_AFX | PositionTarget.IGNORE_AFY | PositionTarget.IGNORE_AFZ | PositionTarget.IGNORE_VX | PositionTarget.IGNORE_VY | PositionTarget.IGNORE_VZ
+    
+    if self._debug: self.get_logger().info(f"[ROTATE_YAW_RELATIVE] Sending PositionTarget: {msg}")
+    self._raw_pub.publish(msg) 
+
+  def rotate(self, yaw: Numeric, send_time: Numeric = None) -> None:
+    """
+    Same as goto but only changes yaw.
+    """
+    self.goto(yaw=yaw, send_time=send_time)
 
   def goto(self, x: Numeric = None, y: Numeric = None, z: Numeric = None, yaw: Numeric = None, send_time = None, min_distance: Numeric = None) -> None:
     """
